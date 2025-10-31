@@ -1,0 +1,15 @@
+
+{
+  "mcpServers": {
+    "sam-mcp-server": {
+      "command": "python",
+      "args": ["D:/mcp/sam-server/mcp_server.py"],
+      "env": {
+        "SAM_CHECKPOINT_PATH": "D:/models/sam_vit_h_4b8939.pth",
+        "SAM_MODEL_TYPE": "vit_h",
+        "SAM_DEVICE": "cuda",
+        "PYTHONIOENCODING": "utf-8"
+      }
+    }
+  }
+}
