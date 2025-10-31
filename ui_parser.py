@@ -18,7 +18,19 @@ _SAM_GENERATOR_LOCK = threading.Lock()
 _SAM_GENERATOR: Optional[SamAutomaticMaskGenerator] = None
 _SAM_CONFIG: Optional[Dict[str, str]] = None
 
-reader = easyocr.Reader(["en", "ko"])
+_OCR_READER_LOCK = threading.Lock()
+_OCR_READER: Optional[easyocr.Reader] = None
+
+
+def get_ocr_reader() -> easyocr.Reader:
+    """Load (or return a cached) EasyOCR reader."""
+    global _OCR_READER
+    with _OCR_READER_LOCK:
+        if _OCR_READER is None:
+            logger.info("Loading EasyOCR reader for [en, ko]")
+            _OCR_READER = easyocr.Reader(["en", "ko"])
+    return _OCR_READER
+
 
 MIN_OCR_AREA_PX = 400  # skip OCR on extremely small segments to save time
 
@@ -182,7 +194,7 @@ def generate_ui_layout(
         ocr_res = []
         if area >= MIN_OCR_AREA_PX:
             try:
-                ocr_res = reader.readtext(visible, paragraph=False)
+                ocr_res = get_ocr_reader().readtext(visible, paragraph=False)
             except Exception as exc:
                 logger.warning("OCR failed for mask %s: %s", i, exc)
         texts = [r[1] for r in ocr_res if r[2] > 0.6]

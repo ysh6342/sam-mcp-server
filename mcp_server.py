@@ -4,7 +4,7 @@ from typing import Optional
 from mcp.server.fastmcp import FastMCP
 from ui_parser import generate_ui_layout as _gen
 
-mcp = FastMCP("sam-mcp-server", version="1.0.0")
+mcp = FastMCP("sam-mcp-server")
 
 @mcp.tool()
 def health_check() -> str:
