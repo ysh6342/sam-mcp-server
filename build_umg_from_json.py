@@ -1,6 +1,9 @@
-
 # UE 5.7 - Build UMG from layout.json with visual defaults
-import unreal, json, os, re
+import json
+import os
+import re
+
+import unreal
 
 BASE_WIDGET_BP = "/Game/UI/BaseUserWidget.BaseUserWidget"
 TARGET_FOLDER = "/Game/UI"
@@ -74,14 +77,18 @@ def _apply_props(widget, node):
     if img_path and os.path.exists(img_path):
         dest_path = f"{TARGET_FOLDER}/Generated"
         tx_name = _sanitize_name(os.path.splitext(os.path.basename(img_path))[0])
-        task = unreal.AssetImportTask()
-        task.set_editor_property("filename", img_path)
-        task.set_editor_property("destination_path", dest_path)
-        task.set_editor_property("destination_name", tx_name)
-        task.set_editor_property("automated", True)
-        task.set_editor_property("save", True)
-        unreal.AssetToolsHelpers.get_asset_tools().import_asset_tasks([task])
-        tex = unreal.load_object(None, f"{dest_path}/{tx_name}.{tx_name}")
+        tex_asset_path = f"{dest_path}/{tx_name}.{tx_name}"
+        if not unreal.EditorAssetLibrary.does_asset_exist(tex_asset_path):
+            if not unreal.EditorAssetLibrary.does_directory_exist(dest_path):
+                unreal.EditorAssetLibrary.make_directory(dest_path)
+            task = unreal.AssetImportTask()
+            task.set_editor_property("filename", img_path)
+            task.set_editor_property("destination_path", dest_path)
+            task.set_editor_property("destination_name", tx_name)
+            task.set_editor_property("automated", True)
+            task.set_editor_property("save", True)
+            unreal.AssetToolsHelpers.get_asset_tools().import_asset_tasks([task])
+        tex = unreal.load_object(None, tex_asset_path)
         if tex and isinstance(widget, unreal.Image):
             brush = widget.get_editor_property("brush")
             brush.set_editor_property("resource_object", tex)
@@ -130,8 +137,11 @@ def build_widget_from_json(json_path, output_widget_name="AutoWidget"):
     dst = f"{TARGET_FOLDER}/{out_name}"
     if not unreal.EditorAssetLibrary.does_asset_exist(BASE_WIDGET_BP):
         raise Exception(f"Base widget blueprint not found: {BASE_WIDGET_BP}")
-    if unreal.EditorAssetLibrary.does_asset_exist(dst+"."+out_name):
-        unreal.EditorAssetLibrary.delete_asset(dst)
+    dest_asset_path = f"{dst}.{out_name}"
+    if unreal.EditorAssetLibrary.does_asset_exist(dest_asset_path):
+        deleted = unreal.EditorAssetLibrary.delete_asset(dest_asset_path)
+        if not deleted:
+            raise Exception(f"Failed to delete existing widget before rebuild: {dest_asset_path}")
     new_asset = unreal.EditorAssetLibrary.duplicate_asset(BASE_WIDGET_BP, dst)
     if not new_asset:
         raise Exception("Failed to duplicate base widget")

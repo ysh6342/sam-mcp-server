@@ -1,5 +1,6 @@
+import os
+from typing import Optional
 
-import os, json
 from mcp.server.fastmcp import FastMCP
 from ui_parser import generate_ui_layout as _gen
 
@@ -13,10 +14,13 @@ def health_check() -> str:
     return f"SAM checkpoint: {ckpt}\nModel: {model}\nDevice: {device}\nEasyOCR expected installed"
 
 @mcp.tool()
-def generate_ui_layout(source_image_path: str, new_widget_name: str = "AutoWidget") -> dict:
+def generate_ui_layout(
+    source_image_path: str,
+    new_widget_name: str = "AutoWidget",
+    output_directory: Optional[str] = None,
+) -> dict:
     """Generate UMG layout JSON + alpha PNG layers + preview from a UI image."""
-    result = _gen(source_image_path, new_widget_name)
-    return result
+    return _gen(source_image_path, new_widget_name, output_directory)
 
 if __name__ == "__main__":
     mcp.run()

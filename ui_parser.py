@@ -1,19 +1,67 @@
+import json
+import logging
+import os
+import threading
+import time
+import uuid
+from typing import Any, Dict, List, Optional
 
-import os, cv2, json, torch, numpy as np, easyocr, uuid, time
-from typing import List, Dict, Any
-from segment_anything import sam_model_registry, SamAutomaticMaskGenerator
+import cv2
+import easyocr
+import numpy as np
+import torch
+from segment_anything import SamAutomaticMaskGenerator, sam_model_registry
 
-reader = easyocr.Reader(['en', 'ko'])
+logger = logging.getLogger(__name__)
 
-def load_sam_model():
+_SAM_GENERATOR_LOCK = threading.Lock()
+_SAM_GENERATOR: Optional[SamAutomaticMaskGenerator] = None
+_SAM_CONFIG: Optional[Dict[str, str]] = None
+
+reader = easyocr.Reader(["en", "ko"])
+
+MIN_OCR_AREA_PX = 400  # skip OCR on extremely small segments to save time
+
+
+def _resolve_sam_device() -> str:
+    override = os.environ.get("SAM_DEVICE")
+    if override:
+        return override
+    return "cuda" if torch.cuda.is_available() else "cpu"
+
+
+def reset_sam_model_cache() -> None:
+    """Clear the memoized SAM mask generator (useful for tests)."""
+    global _SAM_GENERATOR, _SAM_CONFIG
+    with _SAM_GENERATOR_LOCK:
+        _SAM_GENERATOR = None
+        _SAM_CONFIG = None
+
+
+def load_sam_model(force_reload: bool = False) -> SamAutomaticMaskGenerator:
+    """Load (or return a cached) SAM automatic mask generator."""
+    global _SAM_GENERATOR, _SAM_CONFIG
+
     ckpt = os.environ.get("SAM_CHECKPOINT_PATH")
     if not ckpt or not os.path.exists(ckpt):
         raise FileNotFoundError(f"SAM checkpoint not found: {ckpt}")
+
     model_type = os.environ.get("SAM_MODEL_TYPE", "vit_h")
-    device = os.environ.get("SAM_DEVICE", "cuda" if torch.cuda.is_available() else "cpu")
-    sam = sam_model_registry[model_type](checkpoint=ckpt)
-    sam.to(device=device)
-    return SamAutomaticMaskGenerator(sam)
+    device = _resolve_sam_device()
+
+    with _SAM_GENERATOR_LOCK:
+        config = {"ckpt": ckpt, "model_type": model_type, "device": device}
+        if force_reload or _SAM_GENERATOR is None or _SAM_CONFIG != config:
+            try:
+                sam_cls = sam_model_registry[model_type]
+            except KeyError as exc:
+                raise ValueError(f"Unsupported SAM model type: {model_type}") from exc
+            logger.info("Loading SAM model '%s' from %s on %s", model_type, ckpt, device)
+            sam = sam_cls(checkpoint=ckpt)
+            sam.to(device=device)
+            _SAM_GENERATOR = SamAutomaticMaskGenerator(sam)
+            _SAM_CONFIG = config
+    return _SAM_GENERATOR  # type: ignore[return-value]
 
 def _avg_text_color(region_bgr, quad):
     # quad: ((x1,y1),(x2,y2),(x3,y3),(x4,y4))
@@ -75,7 +123,23 @@ def _nest_children(widgets: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
                         taken.add(j)
     return [w for idx, w in enumerate(widgets) if idx not in taken]
 
-def generate_ui_layout(source_image_path, new_widget_name="AutoWidget"):
+def _prepare_output_dir(source_image_path: str, output_directory: Optional[str]) -> str:
+    if output_directory:
+        outdir = os.path.abspath(output_directory)
+    else:
+        outdir = os.path.join(
+            os.path.dirname(source_image_path),
+            f"{os.path.splitext(os.path.basename(source_image_path))[0]}_layers_{uuid.uuid4().hex[:8]}",
+        )
+    os.makedirs(outdir, exist_ok=True)
+    return outdir
+
+
+def generate_ui_layout(
+    source_image_path: str,
+    new_widget_name: str = "AutoWidget",
+    output_directory: Optional[str] = None,
+) -> Dict[str, Any]:
     if not os.path.exists(source_image_path):
         raise FileNotFoundError(f"Image not found: {source_image_path}")
     img = cv2.imread(source_image_path, cv2.IMREAD_COLOR)
@@ -84,11 +148,13 @@ def generate_ui_layout(source_image_path, new_widget_name="AutoWidget"):
     H, W = img.shape[:2]
 
     sam_gen = load_sam_model()
-    masks = sam_gen.generate(img)
+    try:
+        masks = sam_gen.generate(img)
+    except Exception as exc:
+        logger.exception("SAM mask generation failed for %s", source_image_path)
+        raise RuntimeError("SAM mask generation failed") from exc
 
-    outdir = os.path.join(os.path.dirname(source_image_path),
-                          f"{os.path.splitext(os.path.basename(source_image_path))[0]}_layers_{uuid.uuid4().hex[:8]}")
-    os.makedirs(outdir, exist_ok=True)
+    outdir = _prepare_output_dir(source_image_path, output_directory)
 
     # preview overlay
     preview = img.copy()
@@ -112,7 +178,13 @@ def generate_ui_layout(source_image_path, new_widget_name="AutoWidget"):
         # OCR with mask whitening
         visible = region_bgr.copy()
         visible[alpha_full < 128] = 255
-        ocr_res = reader.readtext(visible, paragraph=False)
+        area = int(mask.get("area", int(np.count_nonzero(alpha_full))))
+        ocr_res = []
+        if area >= MIN_OCR_AREA_PX:
+            try:
+                ocr_res = reader.readtext(visible, paragraph=False)
+            except Exception as exc:
+                logger.warning("OCR failed for mask %s: %s", i, exc)
         texts = [r[1] for r in ocr_res if r[2] > 0.6]
         colors = None
         if ocr_res:

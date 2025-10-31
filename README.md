@@ -40,6 +40,7 @@ From Claude or any MCP client call:
 
 - `source_image_path`: path to the UI screenshot (BGRA/RGBA PNG recommended).
 - `new_widget_name`: optional name that becomes the root widget when rebuilding in Unreal. Defaults to `AutoWidget`.
+- `output_directory`: optional folder where layers and JSON should be written. Defaults to a timestamped sibling next to the source image.
 
 The tool creates a sibling directory named `*_layers_<timestamp>/` next to the source image. It contains:
 
