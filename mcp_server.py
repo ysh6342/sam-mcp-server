@@ -1,41 +1,22 @@
 
-import asyncio, json, os
-from mcp.server import Server
-from mcp.types import Tool, ToolRequest, ToolResponse
-from ui_parser import generate_ui_layout
+import os, json
+from mcp.server.fastmcp import FastMCP
+from ui_parser import generate_ui_layout as _gen
 
-server = Server("sam-mcp-server", "1.3.0")
+mcp = FastMCP("sam-mcp-server", version="1.0.0")
 
-@server.tool(Tool(
-    name="health_check",
-    description="Check SAM/EasyOCR environment.",
-    input_schema={"type":"object","properties":{}}
-))
-async def health_check(req: ToolRequest) -> ToolResponse:
+@mcp.tool()
+def health_check() -> str:
     ckpt = os.environ.get("SAM_CHECKPOINT_PATH", "(unset)")
     device = os.environ.get("SAM_DEVICE", "cuda")
     model = os.environ.get("SAM_MODEL_TYPE", "vit_h")
-    return ToolResponse(content=[{"type":"text","text":f"SAM checkpoint: {ckpt}\nModel: {model}\nDevice: {device}\nEasyOCR: expected installed"}])
+    return f"SAM checkpoint: {ckpt}\nModel: {model}\nDevice: {device}\nEasyOCR expected installed"
 
-@server.tool(Tool(
-    name="generate_ui_layout",
-    description="Generate UMG layout JSON from a UI image. Saves alpha PNG layers and preview.",
-    input_schema={
-        "type":"object",
-        "required":["source_image_path"],
-        "properties":{
-            "source_image_path":{"type":"string"},
-            "new_widget_name":{"type":"string","default":"AutoWidget"}
-        }
-    }
-))
-async def generate_ui_layout_tool(req: ToolRequest) -> ToolResponse:
-    args = req.arguments or {}
-    result = generate_ui_layout(args.get("source_image_path"), args.get("new_widget_name"))
-    return ToolResponse(content=[{"type":"text","text":json.dumps(result, ensure_ascii=False, indent=2)}])
-
-async def main():
-    await server.run_stdio()
+@mcp.tool()
+def generate_ui_layout(source_image_path: str, new_widget_name: str = "AutoWidget") -> dict:
+    """Generate UMG layout JSON + alpha PNG layers + preview from a UI image."""
+    result = _gen(source_image_path, new_widget_name)
+    return result
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    mcp.run()
